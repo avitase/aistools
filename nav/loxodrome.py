@@ -41,6 +41,41 @@ def init_from_ais(*,
     return torch.stack((lat, lon_scale * lon, vlat, lon_scale * vlon), dim=1)
 
 
+def to_ais(loxodrome: torch.Tensor) -> torch.Tensor:
+    """
+    Inversion of `init_from_ais`
+
+    Args:
+        loxodrome: batched Loxodromes
+
+    Returns:
+        Batched tuples of longitude, latitude, speed over ground and course over ground
+    """
+
+    def _rad2deg(rad):
+        return rad / math.pi * 180.
+
+    lat = loxodrome[:, 0]
+    lon = loxodrome[:, 1] / torch.cos(lat)
+    vlat = loxodrome[:, 2]
+    scaled_vlon = loxodrome[:, 3]
+
+    sog = torch.sqrt(vlat ** 2 + scaled_vlon ** 2)
+    cog = torch.atan2(scaled_vlon, vlat)
+
+    lat_deg = _rad2deg(lat)
+    lon_deg = _rad2deg(lon)
+    sog_kn = _rad2deg(sog) * 60.
+    cog_deg = _rad2deg(cog)
+
+    return torch.stack((
+        lat_deg,
+        lon_deg,
+        sog_kn,
+        cog_deg * (cog_deg > 0.) + (cog_deg + 360.) * (cog_deg < 0.),
+    ), dim=1)
+
+
 def advance(loxodrome: torch.Tensor, *, t: torch.Tensor) -> torch.Tensor:
     """
     Advances batches of Loxodromes in time

@@ -12,7 +12,15 @@ def test_loxodrome():
         lat = torch.rand_like(sog, dtype=sog.dtype) * 360. - 180.
         lon = torch.rand_like(sog, dtype=sog.dtype) * 360. - 180.
         cog = torch.rand_like(sog, dtype=sog.dtype) * 360.
-        return loxodrome.init_from_ais(lat_deg=lat, lon_deg=lon, sog_kn=sog, cog_deg=cog)
+
+        lox = loxodrome.init_from_ais(lat_deg=lat, lon_deg=lon, sog_kn=sog, cog_deg=cog)
+        ais = loxodrome.to_ais(lox)
+        assert torch.allclose(ais[:, 0], lat)
+        assert torch.allclose(ais[:, 1], lon)
+        assert torch.allclose(ais[:, 2], sog)
+        assert torch.allclose(ais[:, 3], cog)
+
+        return lox
 
     def _deg2nm(deg):
         return deg * 60.
