@@ -1,3 +1,5 @@
+import warnings
+
 import torch
 
 from nav import loxodrome
@@ -9,17 +11,30 @@ class UKF(UKFCell):
         super(UKF, self).__init__(batch_size=batch_size,
                                   state_size=4,
                                   measurement_size=4,
-                                  log_cholesky=True)
+                                  log_cholesky=False)
 
     def motion_model(self, state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
-        Overwrites UKFCell.motion_model
+        Advances state on a Loxodrome
+
+        Args:
+            state: batched state vectors
+            t: batched time deltas
+
+        Returns:
+            Next states
         """
         return loxodrome.advance(state, t)
 
     def measurement_model(self, state: torch.Tensor) -> torch.Tensor:
         """
-        Overwrites UKFCell.measurement_model
+        Predicts measurements from a Loxodrome state
+
+        Args:
+            state: batched state vectors
+
+        Returns:
+            Predicted measurements
         """
         return loxodrome.to_ais(state)
 
@@ -68,6 +83,33 @@ class UKF(UKFCell):
             _diff_0_360(dcog),
         ), dim=1)
 
+    def process_noise_cov(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Translates process noise weights to covariance matrix at given time deltas
+
+        Assuming random accelerations, spatial coordinates x and velocities v are perturbed via a
+        covariance matrix Q = G @ G.T, with G = [.5 t^2, t].T acting on the state vector [x, v].T.
+        Here, G is tau and has to be parametrized similar to the weight parametrization and reads:
+
+        tau = [.5 t^2, 0, .5 t^2, t, 0, 0, 0, t, 0, 0]
+        (Indices:   0, 1,      2, 3, 4, 5, 6, 7, 8, 9)
+
+        Args:
+            t: batched time deltas
+
+        Returns:
+            Batched process noise covariance matrices
+        """
+        tau = torch.zeros_like(self.process_noise, dtype=t.dtype)
+        tau[:, 0] = .5 * t ** 2
+        tau[:, 2] = .5 * t ** 2
+        tau[:, 3] = t
+        tau[:, 7] = t
+
+        mask = torch.tensor(False).repeat(self.batch_size, self.state_size)
+
+        return self.tril_square(self.process_noise * tau, exp_diag_mask=mask)
+
 
 class UKFRNN(KFRNN):
     def __init__(self, *args, **kwargs):
@@ -78,11 +120,8 @@ class UKFRNN(KFRNN):
         return self.cell.process_noise.data
 
     @process_noise.setter
-    def process_noise(self, data: torch.Tensor) -> None:
+    def process_noise(self, data: torch.tensor) -> None:
         self.cell.process_noise.data = data
-
-    def process_noise_cov(self) -> torch.Tensor:
-        return self.cell.process_noise_cov()
 
     @property
     def measurement_noise(self) -> torch.Tensor:
@@ -91,6 +130,9 @@ class UKFRNN(KFRNN):
     @measurement_noise.setter
     def measurement_noise(self, data: torch.Tensor) -> None:
         self.cell.measurement_noise.data = data
+
+    def process_noise_cov(self, t: torch.Tensor) -> torch.Tensor:
+        return self.cell.process_noise_cov(t)
 
     def measurement_noise_cov(self) -> torch.Tensor:
         return self.cell.measurement_noise_cov()
@@ -114,7 +156,7 @@ def init_ukf(*, batch_size: int, debug: bool = True) -> torch.Tensor:
         """
         avg_pos = torch.sum(grad[:, (0, 2)], dim=1) / 2.
         avg_vel = torch.sum(grad[:, (5, 9)], dim=1) / 2.
-        new_grad = torch.zeros_like(grad)  # (3)
+        new_grad = torch.zeros_like(grad, dtype=grad.dtype)  # (3)
         new_grad[:, 0] = avg_pos  # (1)
         new_grad[:, 2] = avg_pos  # (1)
         new_grad[:, 5] = avg_vel  # (2)
@@ -136,7 +178,7 @@ def init_ukf(*, batch_size: int, debug: bool = True) -> torch.Tensor:
         """
         avg = torch.sum(grad[:, (0, 2)], dim=1) / 2.
 
-        new_grad = torch.zeros_like(grad)  # (2)
+        new_grad = torch.zeros_like(grad, dtype=grad.dtype)  # (2)
         new_grad[:, 0] = avg  # (1)
         new_grad[:, 2] = avg  # (1)
 
@@ -145,17 +187,20 @@ def init_ukf(*, batch_size: int, debug: bool = True) -> torch.Tensor:
     def _reinit_nans(grad):
         sel = ~torch.isfinite(grad)
         if torch.any(sel):
-            new_grad = torch.tensor(grad)
+            new_grad = torch.tensor(grad, dtype=grad.dtype)
             new_grad[sel] = torch.rand(new_grad[sel].shape)
             print('Warning! Found {torch.sum(sel)} NaN values in gradient')
             return new_grad
 
-    rnn = UKFRNN(batch_size=batch_size, log_cholesky=True)
+    rnn = UKFRNN(batch_size=batch_size)
 
     rnn.cell.process_noise.register_hook(_reinit_nans)
     rnn.cell.process_noise.register_hook(_constrain_process_noise)
 
     rnn.cell.measurement_noise.register_hook(_reinit_nans)
     rnn.cell.measurement_noise.register_hook(_constrain_measurement_noise)
+
+    if debug:
+        warnings.warn('JIT compilation is skipped')
 
     return rnn if debug else torch.jit.script(rnn)
