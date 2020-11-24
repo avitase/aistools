@@ -2,9 +2,9 @@ import warnings
 
 import torch
 
-from nav import loxodrome
-from ukf.ukf import UKF as BaseUKF
-from ukf.ukf import UKFCell as BaseUKFCell
+from . import loxodrome
+from ..ukf.ukf import UKF as BaseUKF
+from ..ukf.ukf import UKFCell as BaseUKFCell
 
 
 class UKFCell(BaseUKFCell):
