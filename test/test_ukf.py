@@ -1,15 +1,16 @@
 import torch
 
+from nav.ukf import UKFCell
 from nav.ukf import UKF
-from nav.ukf import UKFRNN
 
 
 def test_error():
     torch.manual_seed(0)
 
     def _test(*, measurement, prediction, expected):
-        error = UKF(batch_size=1).error(measurement=torch.tensor(measurement, dtype=torch.double),
-                                        prediction=torch.tensor(prediction, dtype=torch.double))
+        error = UKFCell(batch_size=1).error(
+            measurement=torch.tensor(measurement, dtype=torch.double),
+            prediction=torch.tensor(prediction, dtype=torch.double))
 
         assert torch.allclose(error, torch.tensor(expected, dtype=torch.double))
 
@@ -37,7 +38,7 @@ def test_error():
         cog_p = torch.rand(size, dtype=dtype) * 360.
         prediction = torch.stack((lat_p, lon_p, sog_p, cog_p,), dim=1)
 
-        error = UKF(batch_size=1).error(measurement=measurement, prediction=prediction)
+        error = UKFCell(batch_size=1).error(measurement=measurement, prediction=prediction)
 
         assert torch.all(error > -180.)
         assert torch.all(error < +180.)
@@ -80,7 +81,7 @@ def test_cov_getter():
         p_cov = _process_noise_cov_from_weights(size=(batch_size, 4, 4), weights=pw, t=t)
         m_cov = _measurement_noise_cov_from_weights(size=(batch_size, 4, 4), weights=mw)
 
-        ukf = UKFRNN(batch_size)
+        ukf = UKF(batch_size)
         ukf.process_noise = pw
         ukf.measurement_noise = mw
         assert torch.allclose(p_cov, ukf.process_noise_cov(t))

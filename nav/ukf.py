@@ -3,15 +3,16 @@ import warnings
 import torch
 
 from nav import loxodrome
-from ukf.ukf import UKFCell, KFRNN
+from ukf.ukf import UKF as BaseUKF
+from ukf.ukf import UKFCell as BaseUKFCell
 
 
-class UKF(UKFCell):
+class UKFCell(BaseUKFCell):
     def __init__(self, batch_size: int):
-        super(UKF, self).__init__(batch_size=batch_size,
-                                  state_size=4,
-                                  measurement_size=4,
-                                  log_cholesky=False)
+        super(UKFCell, self).__init__(batch_size=batch_size,
+                                      state_size=4,
+                                      measurement_size=4,
+                                      log_cholesky=False)
 
     def motion_model(self, state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
@@ -111,9 +112,9 @@ class UKF(UKFCell):
         return self.tril_square(self.process_noise * tau, exp_diag_mask=mask)
 
 
-class UKFRNN(KFRNN):
+class UKF(BaseUKF):
     def __init__(self, *args, **kwargs):
-        super(UKFRNN, self).__init__(cell=UKF(*args, **kwargs))
+        super(UKF, self).__init__(cell=UKFCell(*args, **kwargs))
 
     @property
     def process_noise(self) -> torch.tensor:
@@ -192,7 +193,7 @@ def init_ukf(*, batch_size: int, debug: bool = True) -> torch.Tensor:
             print('Warning! Found {torch.sum(sel)} NaN values in gradient')
             return new_grad
 
-    rnn = UKFRNN(batch_size=batch_size)
+    rnn = UKF(batch_size=batch_size)
 
     rnn.cell.process_noise.register_hook(_reinit_nans)
     rnn.cell.process_noise.register_hook(_constrain_process_noise)
