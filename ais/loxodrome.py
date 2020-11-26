@@ -30,15 +30,13 @@ def init_from_ais(*,
     def _deg2rad(deg):
         return deg / 180. * math.pi
 
-    lat = _deg2rad(lat_deg)
-    lon = _deg2rad(lon_deg)
-    sog = _deg2rad(sog_kn / 60.)
-    cog = _deg2rad(cog_deg)
+    lat_rad = _deg2rad(lat_deg)
+    cog_rad = _deg2rad(cog_deg)
 
-    vlat = torch.cos(cog) * sog
-    vlon = torch.sin(cog) / torch.cos(lat) * sog
-    lon_scale = torch.cos(lat)
-    return torch.stack((lat, lon_scale * lon, vlat, lon_scale * vlon), dim=1)
+    vlat_kn = torch.cos(cog_rad) * sog_kn
+    vlon_kn = torch.sin(cog_rad) / torch.cos(lat_rad) * sog_kn
+    lon_scale = torch.cos(lat_rad)
+    return torch.stack((lat_deg, lon_scale * lon_deg, vlat_kn, lon_scale * vlon_kn), dim=1)
 
 
 def to_ais(loxodrome: torch.Tensor) -> torch.Tensor:
@@ -52,21 +50,22 @@ def to_ais(loxodrome: torch.Tensor) -> torch.Tensor:
         Batched tuples of longitude, latitude, speed over ground and course over ground
     """
 
+    def _deg2rad(deg):
+        return deg / 180. * math.pi
+
     def _rad2deg(rad):
         return rad / math.pi * 180.
 
-    lat = loxodrome[:, 0]
-    lon = loxodrome[:, 1] / torch.cos(lat)
-    vlat = loxodrome[:, 2]
+    lat_deg = loxodrome[:, 0]
+    lat_rad = _deg2rad(lat_deg)
+    lon_deg = loxodrome[:, 1] / torch.cos(lat_rad)
+    vlat_kn = loxodrome[:, 2]
     scaled_vlon = loxodrome[:, 3]
 
-    sog = torch.sqrt(vlat ** 2 + scaled_vlon ** 2)
-    cog = torch.atan2(scaled_vlon, vlat)
+    sog_kn = torch.sqrt(vlat_kn ** 2 + scaled_vlon ** 2)
 
-    lat_deg = _rad2deg(lat)
-    lon_deg = _rad2deg(lon)
-    sog_kn = _rad2deg(sog) * 60.
-    cog_deg = _rad2deg(cog)
+    cog_rad = torch.atan2(scaled_vlon, vlat_kn)
+    cog_deg = _rad2deg(cog_rad)
 
     return torch.stack((
         lat_deg,
@@ -87,14 +86,14 @@ def advance(loxodrome: torch.Tensor, *, t: torch.Tensor) -> torch.Tensor:
     Returns:
         Advanced batches of Loxodromes
     """
-    lat = loxodrome[:, 0]
+    lat_deg = loxodrome[:, 0]
     scaled_lon = loxodrome[:, 1]
-    vlat = loxodrome[:, 2]
+    vlat_kn = loxodrome[:, 2]
     scaled_vlon = loxodrome[:, 3]
 
     return torch.stack((
-        lat + vlat * t,
-        scaled_lon + scaled_vlon * t,
-        vlat,
+        lat_deg + vlat_kn / 60. * t,
+        scaled_lon + scaled_vlon / 60. * t,
+        vlat_kn,
         scaled_vlon,
     ), dim=1)

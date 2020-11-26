@@ -101,7 +101,7 @@ def test_cov_getter():
 
 def test_ukf():
     torch.manual_seed(0)
-    batch_size = 2  # TODO: increase to ~100
+    batch_size = 1  # TODO: increase to ~100
 
     img_dir = pathlib.Path('img')
     if not img_dir.is_dir():
@@ -113,11 +113,12 @@ def test_ukf():
         data_loader.lox_gt[:, :, 1:])
     assert torch.allclose(loxodrome.to_ais(data_loader.lox_gt), data_loader.ais_gt)
 
-    data_loader = DataLoader(batch_size=batch_size, n=100, debug=False)
+    data_loader = DataLoader(batch_size=batch_size, n=35, debug=False)
     measurements = data_loader.ais_gt[:, :, 1:]
     dt = data_loader.dt[:, 1:]
 
-    init_state_cov = 1e-8 * torch.eye(4).repeat(batch_size, 1, 1)
+    init_state_cov = (torch.diag(torch.tensor([1. / 60., 1. / 60., .5, 1.])) ** 2) \
+        .repeat(batch_size, 1, 1)
 
     with torch.no_grad():
         ukf = init_ukf(batch_size=batch_size, debug=True)

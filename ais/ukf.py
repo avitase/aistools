@@ -195,7 +195,7 @@ def init_ukf(*, batch_size: int, debug: bool = True) -> torch.Tensor:
 
     ukf = UKF(batch_size=batch_size)
 
-    ukf.process_noise = 3e-4 * torch.ones(batch_size, 10)
+    ukf.process_noise = .5 * torch.ones(batch_size, 10)
     ukf.measurement_noise = torch.tensor([1e-3, 0., 1e-3, 0., 0., .1, 0., 0., 0., 1.]) \
         .unsqueeze(0).repeat(batch_size, 1)
 
