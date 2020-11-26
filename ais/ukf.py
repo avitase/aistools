@@ -193,15 +193,19 @@ def init_ukf(*, batch_size: int, debug: bool = True) -> torch.Tensor:
             print('Warning! Found {torch.sum(sel)} NaN values in gradient')
             return new_grad
 
-    rnn = UKF(batch_size=batch_size)
+    ukf = UKF(batch_size=batch_size)
 
-    rnn.cell.process_noise.register_hook(_reinit_nans)
-    rnn.cell.process_noise.register_hook(_constrain_process_noise)
+    ukf.process_noise = 3e-4 * torch.ones(batch_size, 10)
+    ukf.measurement_noise = torch.tensor([1e-3, 0., 1e-3, 0., 0., .1, 0., 0., 0., 1.]) \
+        .unsqueeze(0).repeat(batch_size, 1)
 
-    rnn.cell.measurement_noise.register_hook(_reinit_nans)
-    rnn.cell.measurement_noise.register_hook(_constrain_measurement_noise)
+    ukf.cell.process_noise.register_hook(_reinit_nans)
+    ukf.cell.process_noise.register_hook(_constrain_process_noise)
+
+    ukf.cell.measurement_noise.register_hook(_reinit_nans)
+    ukf.cell.measurement_noise.register_hook(_constrain_measurement_noise)
 
     if debug:
         warnings.warn('JIT compilation is skipped')
 
-    return rnn if debug else torch.jit.script(rnn)
+    return ukf if debug else torch.jit.script(ukf)
