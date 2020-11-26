@@ -138,29 +138,30 @@ def test_ukf():
             assert error_ais[2].item() < 1. ** 2  # 1 kt
             assert error_ais[3].item() < 2. ** 2  # 2 deg
 
-            fig, axs = plt.subplots(2, 4)
-            fig.set_size_inches(12., 6.)
-            fig.subplots_adjust(wspace=.4, hspace=.4)
-            for i in range(4):
-                axs[0, i].plot(lox[i], marker='.', label='GT')
-                axs[0, i].plot(pred_lox[i], marker='.', label='Pred.')
-                axs[0, i].set_title(f'Lox. {i + 1}')
-                axs[0, i].legend()
+            if b < 10:
+                fig, axs = plt.subplots(2, 4)
+                fig.set_size_inches(12., 6.)
+                fig.subplots_adjust(wspace=.4, hspace=.4)
+                for i in range(4):
+                    axs[0, i].plot(lox[i], marker='.', label='GT')
+                    axs[0, i].plot(pred_lox[i], marker='.', label='Pred.')
+                    axs[0, i].set_title(f'Lox. {i + 1}')
+                    axs[0, i].legend()
 
-            for i in range(4):
-                axs[1, i].plot(ais[i], marker='.', label='GT')
-                axs[1, i].plot(pred_ais[i], marker='.', label='Pred.')
-                axs[1, i].set_title(f'AIS {i + 1}')
-                axs[1, i].legend()
+                for i in range(4):
+                    axs[1, i].plot(ais[i], marker='.', label='GT')
+                    axs[1, i].plot(pred_ais[i], marker='.', label='Pred.')
+                    axs[1, i].set_title(f'AIS {i + 1}')
+                    axs[1, i].legend()
 
-            fig.savefig(img_dir / f'components_b{b + 1}.png')
+                fig.savefig(img_dir / f'components_b{b + 1}.png')
 
-            fig, ax = plt.subplots()
-            ax.plot(torch.cos(ais[0] / 180. * math.pi) * ais[1], ais[0],
-                    marker='.', label='GT')
-            ax.plot(torch.cos(pred_ais[0] / 180. * math.pi) * pred_ais[1], ais[0],
-                    marker='.', label='Pred.')
-            ax.set_aspect(1., 'datalim')
-            ax.set_xlabel('cos(Latitude) x Longitude')
-            ax.set_ylabel('Latitude')
-            fig.savefig(img_dir / f'trajectory_b{b + 1}.png')
+                fig, ax = plt.subplots()
+                ax.plot(torch.cos(ais[0] / 180. * math.pi) * ais[1], ais[0],
+                        marker='.', label='GT')
+                ax.plot(torch.cos(pred_ais[0] / 180. * math.pi) * pred_ais[1], ais[0],
+                        marker='.', label='Pred.')
+                ax.set_aspect(1., 'datalim')
+                ax.set_xlabel('cos(Latitude) x Longitude')
+                ax.set_ylabel('Latitude')
+                fig.savefig(img_dir / f'trajectory_b{b + 1}.png')
