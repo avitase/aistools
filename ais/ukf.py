@@ -25,7 +25,7 @@ class UKFCell(BaseUKFCell):
         Returns:
             Next states
         """
-        return loxodrome.advance(state, t)
+        return loxodrome.advance(state, t=t.unsqueeze(1))
 
     def measurement_model(self, state: torch.Tensor) -> torch.Tensor:
         """
@@ -39,7 +39,7 @@ class UKFCell(BaseUKFCell):
         """
         return loxodrome.to_ais(state)
 
-    def error(self, measurement: torch.Tensor, prediction: torch.Tensor) -> torch.Tensor:
+    def error(self, prediction: torch.Tensor, measurement: torch.Tensor) -> torch.Tensor:
         """
         Custom error function for measurement and prediction
 
@@ -72,10 +72,10 @@ class UKFCell(BaseUKFCell):
 
             return _mod(diff + 180., 360.) - 180.
 
-        dlat = measurement[:, 0] - prediction[:, 0]
-        dlon = measurement[:, 1] - prediction[:, 1]
-        dsog = measurement[:, 2] - prediction[:, 2]
-        dcog = measurement[:, 3] - prediction[:, 3]
+        dlat = prediction[:, 0] - measurement[:, 0]
+        dlon = prediction[:, 1] - measurement[:, 1]
+        dsog = prediction[:, 2] - measurement[:, 2]
+        dcog = prediction[:, 3] - measurement[:, 3]
 
         return torch.stack((
             _diff_m180_p180(dlat),
