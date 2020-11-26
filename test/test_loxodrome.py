@@ -2,7 +2,7 @@ import math
 
 import torch
 
-from ais import loxodrome
+from ..ais import loxodrome
 
 
 def test_loxodrome():
