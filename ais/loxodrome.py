@@ -34,9 +34,8 @@ def init_from_ais(*,
     cog_rad = _deg2rad(cog_deg)
 
     vlat_kn = torch.cos(cog_rad) * sog_kn
-    vlon_kn = torch.sin(cog_rad) / torch.cos(lat_rad) * sog_kn
-    lon_scale = torch.cos(lat_rad)
-    return torch.stack((lat_deg, lon_scale * lon_deg, vlat_kn, lon_scale * vlon_kn), dim=1)
+    scaled_vlon_kn = torch.sin(cog_rad) * sog_kn
+    return torch.stack((lat_deg, torch.cos(lat_rad) * lon_deg, vlat_kn, scaled_vlon_kn), dim=1)
 
 
 def to_ais(loxodrome: torch.Tensor) -> torch.Tensor:
