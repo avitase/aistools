@@ -1,0 +1,3 @@
+[submodule "turbokf"]
+	path = turbokf
+	url = git@github.com:avitase/turbokf.git
