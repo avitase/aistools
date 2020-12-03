@@ -2,97 +2,91 @@ import math
 
 import torch
 
+from turbokf.turbokf import ekf_cell
 
-def init_from_ais(*,
-                  lat_deg: torch.Tensor,
-                  lon_deg: torch.Tensor,
-                  sog_kn: torch.Tensor,
-                  cog_deg: torch.Tensor) -> torch.Tensor:
-    """
-    Initialize batches of Loxodromes
 
-    A Loxodrome is parametrized as `(lat, lon', vlat, vlon')`, where the first and third parameters
-    are the latitudinal position and speed, respectively. The second and fourth parameters
-    are the scaled longitudinal position and speed, where the scale factor is the cosine of the
-    first parameter (latitudinal position). After scaling, both velocities are approximately
-    conserved on Loxodromes through time.
+class Loxodrome(ekf_cell.EKFCell):
+    def __init__(self, batch_size):
+        super().__init__(batch_size=batch_size, state_size=4, measurement_size=4)
 
-    Args:
-        lat: batched latitudes in degree
-        lon: batched longitudes in degree
-        sog_kn: batched speed over ground in knots
-        sog: batched course over ground in degree
-
-    Returns:
-        Batches of Loxodromes
-    """
-
-    def _deg2rad(deg):
+    def _deg2rad(self, deg: torch.Tensor) -> torch.Tensor:
         return deg / 180. * math.pi
 
-    lat_rad = _deg2rad(lat_deg)
-    cog_rad = _deg2rad(cog_deg)
+    def _kn2deg(self, kn: torch.Tensor) -> torch.Tensor:
+        return kn / 60.
 
-    vlat_kn = torch.cos(cog_rad) * sog_kn
-    scaled_vlon_kn = torch.sin(cog_rad) * sog_kn
-    return torch.stack((lat_deg, torch.cos(lat_rad) * lon_deg, vlat_kn, scaled_vlon_kn), dim=1)
+    def _kn2rad(self, kn: torch.Tensor) -> torch.Tensor:
+        return kn / 60. / 180. * math.pi
 
+    def init_state(self,
+                   *,
+                   lat_deg: torch.Tensor,
+                   lon_deg: torch.Tensor,
+                   sog_kn: torch.Tensor,
+                   cog_deg: torch.Tensor) -> torch.Tensor:
+        """
+        Initialize batches of Loxodromes
 
-def to_ais(loxodrome: torch.Tensor) -> torch.Tensor:
-    """
-    Inversion of `init_from_ais`
+        A Loxodrome is parametrized as `(lat, lon', vlat, vlon')`, where the first and third
+        parameters are the latitudinal position and speed, respectively. The second and fourth
+        parameters are the scaled longitudinal position and speed, where the scale factor is the
+        cosine of the first parameter (latitudinal position). After scaling, both velocities are
+        conserved on Loxodromes through time.
 
-    Args:
-        loxodrome: batched Loxodromes
+        Args:
+            lat_deg: batched latitudes in degree
+            lon_deg: batched longitudes in degree
+            sog_kn: batched speed over ground in knots
+            cog_deg: batched course over ground in degree
 
-    Returns:
-        Batched tuples of longitude, latitude, speed over ground and course over ground
-    """
+        Returns:
+            Batches of Loxodromes
+        """
 
-    def _deg2rad(deg):
-        return deg / 180. * math.pi
+        lat_rad = self._deg2rad(lat_deg)
+        cog_rad = self._deg2rad(cog_deg)
 
-    def _rad2deg(rad):
-        return rad / math.pi * 180.
+        vlat_kn = torch.cos(cog_rad) * sog_kn
+        scaled_vlon_kn = torch.sin(cog_rad) * sog_kn
+        return torch.stack((
+            lat_deg,
+            (torch.cos(lat_rad) * lon_deg),
+            vlat_kn,
+            scaled_vlon_kn,
+        ), dim=1)
 
-    lat_deg = loxodrome[:, 0]
-    lat_rad = _deg2rad(lat_deg)
-    lon_deg = loxodrome[:, 1] / torch.cos(lat_rad)
-    vlat_kn = loxodrome[:, 2]
-    scaled_vlon = loxodrome[:, 3]
+    def motion_model_jacobian(self, state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        lat_deg = state[:, 0]
+        slon_deg = state[:, 1]
+        vlat_kn = state[:, 2]
 
-    sog_kn = torch.sqrt(vlat_kn ** 2 + scaled_vlon ** 2)
+        vlat_deg = self._kn2deg(vlat_kn)
+        lat_rad = self._deg2rad(lat_deg)
 
-    cog_rad = torch.atan2(scaled_vlon, vlat_kn)
-    cog_deg = _rad2deg(cog_rad)
+        j = torch.zeros(self.batch_size, 4, 4)
+        j[:, 0, 2] = 1.
+        j[:, 1, 3] = 1.
 
-    return torch.stack((
-        lat_deg,
-        lon_deg,
-        sog_kn,
-        cog_deg * (cog_deg > 0.) + (cog_deg + 360.) * (cog_deg < 0.),
-    ), dim=1)
+        j[:, 1, 0] = -slon_deg * vlat_deg / torch.cos(lat_rad) ** 2
+        j[:, 1, 1] = -vlat_deg * torch.tan(lat_rad)
+        j[:, 1, 2] = -slon_deg * torch.tan(lat_rad)
 
+        return torch.eye(4, 4).unsqueeze(0) + j * t.unsqueeze(1).unsqueeze(2)
 
-def advance(loxodrome: torch.Tensor, *, t: torch.Tensor) -> torch.Tensor:
-    """
-    Advances batches of Loxodromes in time
+    def motion_model(self, state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        lat_deg = state[:, 0]
+        slon_deg = state[:, 1]
+        vlat_kn = state[:, 2]
+        svlon_kn = state[:, 3]
 
-    Args:
-        loxodrome: batched Loxodromes
-        t: batches of time
+        new_lox = torch.empty_like(state)
+        new_lox[:, 0] = lat_deg + t * self._kn2deg(vlat_kn)
+        new_lox[:, 1] = slon_deg + t * self._kn2deg(svlon_kn) \
+                        - t * slon_deg * self._kn2deg(vlat_kn) * torch.tan(self._deg2rad(lat_deg))
+        new_lox[:, 2] = vlat_kn
+        new_lox[:, 3] = svlon_kn
 
-    Returns:
-        Advanced batches of Loxodromes
-    """
-    lat_deg = loxodrome[:, 0]
-    scaled_lon = loxodrome[:, 1]
-    vlat_kn = loxodrome[:, 2]
-    scaled_vlon = loxodrome[:, 3]
+        return new_lox
 
-    return torch.stack((
-        lat_deg + vlat_kn / 60. * t,
-        scaled_lon + scaled_vlon / 60. * t,
-        vlat_kn,
-        scaled_vlon,
-    ), dim=1)
+    def measurement_model_jacobian(self, state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        return torch.eye(4, 4).unsqueeze(0).repeat(self.batch_size, 1, 1)
