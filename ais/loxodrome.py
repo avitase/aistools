@@ -12,11 +12,30 @@ class Loxodrome(ekf_cell.EKFCell):
     def _deg2rad(self, deg: torch.Tensor) -> torch.Tensor:
         return deg / 180. * math.pi
 
-    def _kn2deg(self, kn: torch.Tensor) -> torch.Tensor:
-        return kn / 60.
+    def _rad2deg(self, rad: torch.Tensor) -> torch.Tensor:
+        return rad / math.pi * 180.
 
     def _kn2rad(self, kn: torch.Tensor) -> torch.Tensor:
-        return kn / 60. / 180. * math.pi
+        return self._deg2rad(kn) / 60.
+
+    def _rad2kn(self, rad: torch.Tensor) -> torch.Tensor:
+        return self._rad2deg(rad) * 60.
+
+    def _wrap_mpi_ppi(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Wraps x onto the interval [-pi, pi] by adding / subtracting 2pi
+
+        Args:
+            x: angle in radians
+
+        Returns:
+            x       if x in [-pi, +pi]
+            x + 2pi if x < -pi
+            x - 2pi if x > +pi
+        """
+        m1 = (x > -math.pi)
+        m2 = (x < math.pi)
+        return x * (m1 & m2) + (x + 2. * math.pi) * ~m1 + (x - 2 * math.pi) * ~m2
 
     def init_state(self,
                    *,
@@ -44,49 +63,63 @@ class Loxodrome(ekf_cell.EKFCell):
         """
 
         lat_rad = self._deg2rad(lat_deg)
+        lon_rad = self._deg2rad(lon_deg)
         cog_rad = self._deg2rad(cog_deg)
+        sog_rad = self._kn2rad(sog_kn)
 
-        vlat_kn = torch.cos(cog_rad) * sog_kn
-        scaled_vlon_kn = torch.sin(cog_rad) * sog_kn
+        vlat_rad = torch.cos(cog_rad) * sog_rad
+        vlon_rad = torch.sin(cog_rad) * sog_rad / torch.cos(lat_rad)
         return torch.stack((
-            lat_deg,
-            (torch.cos(lat_rad) * lon_deg),
-            vlat_kn,
-            scaled_vlon_kn,
+            lat_rad,
+            lon_rad,
+            vlat_rad,
+            vlon_rad,
         ), dim=1)
 
     def motion_model_jacobian(self, state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        lat_deg = state[:, 0]
-        slon_deg = state[:, 1]
-        vlat_kn = state[:, 2]
+        lat = state[:, 0]
+        vlat = state[:, 2]
+        vlon = state[:, 3]
 
-        vlat_deg = self._kn2deg(vlat_kn)
-        lat_rad = self._deg2rad(lat_deg)
+        sec_lat = 1. / torch.cos(lat)
+        tan_lat = torch.tan(lat)
 
         j = torch.zeros(self.batch_size, 4, 4)
         j[:, 0, 2] = 1.
         j[:, 1, 3] = 1.
 
-        j[:, 1, 0] = -slon_deg * vlat_deg / torch.cos(lat_rad) ** 2
-        j[:, 1, 1] = -vlat_deg * torch.tan(lat_rad)
-        j[:, 1, 2] = -slon_deg * torch.tan(lat_rad)
+        j[:, 3, 0] = vlat * vlon * sec_lat ** 2
+        j[:, 3, 2] = vlon * tan_lat
+        j[:, 3, 3] = vlat * tan_lat
 
         return torch.eye(4, 4).unsqueeze(0) + j * t.unsqueeze(1).unsqueeze(2)
 
     def motion_model(self, state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        lat_deg = state[:, 0]
-        slon_deg = state[:, 1]
-        vlat_kn = state[:, 2]
-        svlon_kn = state[:, 3]
+        lat = state[:, 0]
+        lon = state[:, 1]
+        vlat = state[:, 2]
+        vlon = state[:, 3]
 
         new_lox = torch.empty_like(state)
-        new_lox[:, 0] = lat_deg + t * self._kn2deg(vlat_kn)
-        new_lox[:, 1] = slon_deg + t * self._kn2deg(svlon_kn) \
-                        - t * slon_deg * self._kn2deg(vlat_kn) * torch.tan(self._deg2rad(lat_deg))
-        new_lox[:, 2] = vlat_kn
-        new_lox[:, 3] = svlon_kn
+        new_lox[:, 0] = lat + t * vlat
+        new_lox[:, 1] = self._wrap_mpi_ppi(lon + t * vlon)
+        new_lox[:, 2] = vlat
+        new_lox[:, 3] = vlon * (1 + t * vlat * torch.tan(lat))
 
         return new_lox
 
     def measurement_model_jacobian(self, state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         return torch.eye(4, 4).unsqueeze(0).repeat(self.batch_size, 1, 1)
+
+    def innovation(self, measurement: torch.Tensor, prediction: torch.Tensor) -> torch.Tensor:
+        dlat = measurement[:, 0] - prediction[:, 0]
+        dlon = measurement[:, 1] - prediction[:, 1]
+        dvlat = measurement[:, 2] - prediction[:, 2]
+        dvlon = measurement[:, 3] - prediction[:, 3]
+
+        return torch.stack((
+            dlat,
+            self._wrap_mpi_ppi(dlon),
+            dvlat,
+            dvlon,
+        ), dim=1)
