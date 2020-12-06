@@ -17,8 +17,14 @@ def random_init(*, batch_size, sog_kn=None, cog_deg=None):
 
     lox = Loxodrome(batch_size=batch_size)
     state = lox.init_state(lat_deg=lat, lon_deg=lon, sog_kn=sog, cog_deg=cog)
-    pred = lox.measurement_model(state, t)
 
+    ais = lox.state_to_ais(state)
+    assert torch.allclose(lat, ais[0])
+    assert torch.allclose(lon, ais[1])
+    assert torch.allclose(sog, ais[2])
+    assert torch.allclose(cog, ais[3])
+
+    pred = lox.measurement_model(state, t)
     assert torch.allclose(state, pred)
 
     return state, t

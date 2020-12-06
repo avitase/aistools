@@ -23,19 +23,39 @@ class Loxodrome(ekf_cell.EKFCell):
 
     def _wrap_mpi_ppi(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Wraps x onto the interval [-pi, pi] by adding / subtracting 2pi
+        Wraps x onto the interval [-pi, pi] by conditionally adding / subtracting 2 * pi
 
         Args:
             x: angle in radians
 
         Returns:
-            x       if x in [-pi, +pi]
-            x + 2pi if x < -pi
-            x - 2pi if x > +pi
+            x          if x in [-pi, +pi]
+            x + 2 * pi if x < -pi
+            x - 2 * pi if x > +pi
         """
-        m1 = (x > -math.pi)
-        m2 = (x < math.pi)
-        return x * (m1 & m2) + (x + 2. * math.pi) * ~m1 + (x - 2 * math.pi) * ~m2
+        return torch.where(x > math.pi,
+                           x - 2. * math.pi,
+                           torch.where(x < -math.pi,
+                                       x + 2. * math.pi,
+                                       x))
+
+    def _wrap_0_2pi(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Wraps x onto the interval [0, 2 * pi] by conditionally adding / subtracting 2 * pi
+
+        Args:
+            x: angle in radians
+
+        Returns:
+            x          if x in [0, 2 * pi]
+            x + 2 * pi if x < 0
+            x - 2 * pi if x > 2 * pi
+        """
+        return torch.where(x > 2. * math.pi,
+                           x - 2. * math.pi,
+                           torch.where(x < 0,
+                                       x + 2. * math.pi,
+                                       x))
 
     def init_state(self,
                    *,
@@ -61,7 +81,6 @@ class Loxodrome(ekf_cell.EKFCell):
         Returns:
             Batches of Loxodromes
         """
-
         lat_rad = self._deg2rad(lat_deg)
         lon_rad = self._deg2rad(lon_deg)
         cog_rad = self._deg2rad(cog_deg)
@@ -69,12 +88,40 @@ class Loxodrome(ekf_cell.EKFCell):
 
         vlat_rad = torch.cos(cog_rad) * sog_rad
         vlon_rad = torch.sin(cog_rad) * sog_rad / torch.cos(lat_rad)
+
         return torch.stack((
             lat_rad,
             lon_rad,
             vlat_rad,
             vlon_rad,
         ), dim=1)
+
+    def state_to_ais(self, state):
+        """
+        Inversion of init_state
+
+        Args:
+            state: batches of state
+
+        Returns:
+            Arguments of init_state
+        """
+        lat_rad = state[:, 0]
+        lon_rad = state[:, 1]
+        vlat_rad = state[:, 2]
+        vlon_rad = state[:, 3]
+
+        svlon_rad = torch.cos(lat_rad) * vlon_rad
+
+        sog_rad = torch.sqrt(vlat_rad ** 2 + svlon_rad ** 2)
+        cog_rad = torch.atan2(svlon_rad, vlat_rad)
+
+        return (
+            self._rad2deg(lat_rad),
+            self._rad2deg(lon_rad),
+            self._rad2kn(sog_rad),
+            self._rad2deg(self._wrap_0_2pi(cog_rad)),
+        )
 
     def motion_model_jacobian(self, state: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         lat = state[:, 0]
